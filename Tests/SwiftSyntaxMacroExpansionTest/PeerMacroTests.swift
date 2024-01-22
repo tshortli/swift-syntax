@@ -22,6 +22,8 @@ import SwiftDiagnostics
 import SwiftSyntax
 import SwiftSyntaxMacroExpansion
 import SwiftSyntaxMacros
+import struct SwiftSyntaxMacros.MacroExpansionErrorMessage
+import struct SwiftSyntaxMacros.MacroExpansionFixItMessage
 import SwiftSyntaxMacrosTestSupport
 import XCTest
 
