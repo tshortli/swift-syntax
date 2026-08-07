@@ -119,49 +119,70 @@ public struct DiagnosticsFormatter {
     return formatter.annotatedSource(tree: tree, diags: diags)
   }
 
+  /// The line and column span covered by a single diagnostic highlight.
+  ///
+  /// Spans are computed once for all of the diagnostics in a snippet, rather
+  /// than per line, because a highlight may cover lines other than the one that
+  /// its diagnostic is located on.
+  private struct HighlightSpan {
+    var startLine: Int
+    var startColumn: Int
+    var endLine: Int
+    var endColumn: Int
+  }
+
+  /// Compute the spans covered by the highlights of the given diagnostics.
+  private func highlightSpans(
+    in diags: [Diagnostic],
+    tree: some SyntaxProtocol,
+    sourceLocationConverter slc: SourceLocationConverter
+  ) -> [HighlightSpan] {
+    return diags.flatMap { $0.highlights }.compactMap { (highlight) -> HighlightSpan? in
+      if highlight.root != Syntax(tree) {
+        return nil
+      }
+
+      let startLoc = highlight.startLocation(converter: slc, afterLeadingTrivia: true)
+      let endLoc = highlight.endLocation(converter: slc, afterTrailingTrivia: false)
+      return HighlightSpan(
+        startLine: startLoc.line,
+        startColumn: startLoc.column,
+        endLine: endLoc.line,
+        endColumn: endLoc.column
+      )
+    }
+  }
+
   /// Colorize the given source line by applying highlights from diagnostics.
   private func colorizeSourceLine(
     _ annotatedLine: AnnotatedSourceLine,
     lineNumber: Int,
-    tree: some SyntaxProtocol,
-    sourceLocationConverter slc: SourceLocationConverter
+    highlightSpans: [HighlightSpan]
   ) -> String {
-    if annotatedLine.diagnostics.isEmpty {
+    if highlightSpans.isEmpty {
       return annotatedLine.sourceString
     }
 
     // Compute the set of highlight ranges that land on this line. These
     // are column ranges, sorted in order of increasing starting column, and
     // with overlapping ranges merged.
-    let highlightRanges: [Range<Int>] = annotatedLine.diagnostics.map {
-      $0.highlights
-    }.joined().compactMap { (highlight) -> Range<Int>? in
-      if highlight.root != Syntax(tree) {
-        return nil
-      }
-
-      let startLoc = highlight.startLocation(converter: slc, afterLeadingTrivia: true)
-      let startLine = startLoc.line
-
+    let highlightRanges: [Range<Int>] = highlightSpans.compactMap { (span) -> Range<Int>? in
       // Find the starting column.
       let startColumn: Int
-      if startLine < lineNumber {
+      if span.startLine < lineNumber {
         startColumn = 1
-      } else if startLine == lineNumber {
-        startColumn = startLoc.column
+      } else if span.startLine == lineNumber {
+        startColumn = span.startColumn
       } else {
         return nil
       }
 
       // Find the ending column.
-      let endLoc = highlight.endLocation(converter: slc, afterTrailingTrivia: false)
-      let endLine = endLoc.line
-
       let endColumn: Int
-      if endLine > lineNumber {
+      if span.endLine > lineNumber {
         endColumn = annotatedLine.sourceString.utf8.count
-      } else if endLine == lineNumber {
-        endColumn = endLoc.column
+      } else if span.endLine == lineNumber {
+        endColumn = span.endColumn
       } else {
         return nil
       }
@@ -216,6 +237,10 @@ public struct DiagnosticsFormatter {
     sourceLocationConverter: SourceLocationConverter? = nil
   ) -> String {
     let slc = sourceLocationConverter ?? SourceLocationConverter(fileName: "<unknown>", tree: tree)
+
+    // Highlights are gathered from every diagnostic in the snippet, since a
+    // highlight may cover lines other than the one its diagnostic is on.
+    let highlightSpans = highlightSpans(in: diags, tree: tree, sourceLocationConverter: slc)
 
     // First, we need to put each line and its diagnostics together
     var annotatedSourceLines = [AnnotatedSourceLine]()
@@ -288,8 +313,7 @@ public struct DiagnosticsFormatter {
         colorizeSourceLine(
           annotatedLine,
           lineNumber: lineNumber,
-          tree: tree,
-          sourceLocationConverter: slc
+          highlightSpans: highlightSpans
         )
       )
 
